@@ -24,7 +24,20 @@ except Exception as e:
 
 logging.basicConfig(filename=NETCONF_DIR+'/logs/netconf_server.log', level=logging.DEBUG)
 
+CANDIDATE = []
 
+def cand_run_diff():
+    process = subprocess.Popen(['net', 'show', 'configuration', 'commands'], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    proc_stdout, proc_error = process.communicate()
+    if proc_error:
+        logging.error('Error while executing "net show configuration commands" during difference calculation : '+ proc_error)
+        return {'Error' : 'Error while executing "net show configuration commands" during difference calculation : ' + proc_error}
+    temp_list = proc_stdout.split('\n')
+    running_cmd_list = temp_list[:temp_list.index('net commit')+1]
+    global CANDIDATE
+    candidate_set = set(CANDIDATE)
+    running_set = set(running_cmd_list)
+    return list(candidate_set.difference(running_set))
 
 def valid_xml_char_ordinal(c):
     codepoint = ord(c)
@@ -99,16 +112,24 @@ class SystemServer(object):
         """Passed the source element"""
         data = util.elm("config")
 
-        source_accepted = ['{urn:ietf:params:xml:ns:netconf:base:1.0}running', '{urn:ietf:params:xml:ns:netconf:base:1.1}running', 'running']
+        source_accepted = ['{urn:ietf:params:xml:ns:netconf:base:1.0}running', '{urn:ietf:params:xml:ns:netconf:base:1.1}running', 'running', '{urn:ietf:params:xml:ns:netconf:base:1.0}candidate', '{urn:ietf:params:xml:ns:netconf:base:1.1}candidate', 'candidate']
 
-        if source_elm[0].tag not in source_accepted:
+        if len(source_elm) == 0:
+            logging.error('Value of source element missing')
+            raise error.InvalidValueProtoError(rpc, message='Missing value for source')
+        elif source_elm[0].tag not in source_accepted:
             logging.error('Only running datastore is accepted as source element in get-config operation. Source : ' + source_elm[0].tag)
             raise error.OperationNotSupportedAppError(rpc, message='Operation not permitted')
 
         if len(source_elm) > 1:
             logging.error('More than one source element for get-config operation')
             raise error.UnknownElementProtoError(rpc, source_elm[1])
-
+        
+        if 'candidate' in source_elm[0].tag:
+            global CANDIDATE
+            for cmd in CANDIDATE:
+                data.append(util.leaf_elm("cmd", cmd))
+            return util.filter_results(rpc, data, filter_or_none)
 
         process = subprocess.Popen(['net', 'show', 'configuration', 'commands'], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         proc_stdout, proc_error = process.communicate()
@@ -160,8 +181,8 @@ class SystemServer(object):
         proc_stdout, proc_error = process.communicate()
         json_stdout = json.loads(proc_stdout)
 
+        existing_cmds = []
         if json_stdout:
-            existing_cmds = []
             for cmd in json_stdout['commands']:
                 existing_cmds.append(cmd['command'])     
         
@@ -199,8 +220,13 @@ class SystemServer(object):
             existing_cmds_thread.append(eth)
             eth.start()
 
-        with open(NETCONF_DIR +'/candidate.txt', 'a+') as f:
-            f.write('\n'.join(cmdlist))
+        #with open(NETCONF_DIR +'/candidate.txt', 'a+') as f:
+        #    f.write('\n'.join(cmdlist))
+
+        global CANDIDATE
+        edit_candidate = CANDIDATE[:]
+        edit_candidate.extend(cmdlist)
+        CANDIDATE = list(set(edit_candidate))
 
         for eth in existing_cmds_thread:
             eth.join()
@@ -231,12 +257,8 @@ class SystemServer(object):
             for cmd in json_stdout['commands']:
                 existing_cmds.append(cmd['command'])
 
-        try:
-            with open(NETCONF_DIR+'/candidate.txt', 'r') as f:
-                cmdlist = f.readlines()
-        except IOError as e:
-            logging.error('Error while opening candidate.txt file. Make sure configuration is pushed to candidate datastore : ' + e)
-            raise error.MalformedMessageRPCError(rpc)
+
+        cmdlist = cand_run_diff()
 
         process = subprocess.Popen(["net", "abort"], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         proc_stdout, proc_error = process.communicate()
@@ -296,13 +318,16 @@ class SystemServer(object):
             for cmd in json_stdout['commands']:
                 existing_cmds.append(cmd['command'])
 
-
+        '''
         try:
             with open(NETCONF_DIR+'/candidate.txt', 'r') as f:
                 cmdlist = f.readlines()
         except IOError as e:
             logging.error('Error while opening candidate.txt file. Make sure configuration is pushed to candidate datastore : ' + e)
             raise error.MalformedMessageRPCError(rpc)
+        '''
+        cmdlist = cand_run_diff()
+
         process = subprocess.Popen(["net", "abort"], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         proc_stdout, proc_error = process.communicate()
         thread_list = []
@@ -328,9 +353,32 @@ class SystemServer(object):
             clean_proc_error = ''.join(c for c in proc_error if valid_xml_char_ordinal(c))
             raise error.InvalidValueAppError(rpc, message=clean_proc_error)
 
-        os.remove(NETCONF_DIR+'candidate.txt')
         for eth in existing_cmds_threads:
             eth.join()
+        return util.elm("ok")
+
+    def rpc_copy_config(self, session, rpc, source_elm, target_elm):
+        source_accepted = ['{urn:ietf:params:xml:ns:netconf:base:1.0}running', '{urn:ietf:params:xml:ns:netconf:base:1.1}running', 'running']
+        target_accepted = ['{urn:ietf:params:xml:ns:netconf:base:1.0}candidate', '{urn:ietf:params:xml:ns:netconf:base:1.1}candidate', 'candidate']
+        if len(source_elm)==0:
+            logging.error('Value of source element missing')
+            raise error.InvalidValueProtoError(rpc, message='Missing value for source')
+        elif len(target_elm)==0:
+            logging.error('Value of target element missing')
+            raise error.InvalidValueProtoError(rpc, message='Missing value for target')
+        elif source_elm[0].tag not in source_accepted or target_elm[0].tag not in target_accepted:
+            logging.error('copy-config can be performed from source "running" to target "candidate"')
+            raise error.OperationNotSupportedAppError(rpc, message='Operation not permitted')
+
+        process = subprocess.Popen(['net', 'show', 'configuration', 'commands'], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        proc_stdout, proc_error = process.communicate()
+        if proc_error:
+            logging.error('Error while executing "net show configuration commands" during difference calculation : '+ proc_error)
+            raise error.OperationFailedProtoError(rpc)
+        temp_list = proc_stdout.split('\n')
+        running_cmd_list = temp_list[:temp_list.index('net commit')+1]
+        global CANDIDATE
+        CANDIDATE = running_cmd_list
         return util.elm("ok")
 
     def rpc_system_restart(self, session, rpc, *params):
@@ -348,6 +396,16 @@ def main(*margs):
     parser.add_argument('--port', type=int, default=8300, help='Netconf server port')
     parser.add_argument("--username", default="admin", help='Netconf username')
     args = parser.parse_args(*margs)
+
+    process = subprocess.Popen(['net', 'show', 'configuration', 'commands'], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    proc_stdout, proc_error = process.communicate()
+    if proc_error:
+        logging.error('Error while executing "net show configuration commands" during difference calculation : '+ proc_error)
+        raise error.OperationFailedProtoError(rpc)
+    temp_list = proc_stdout.split('\n')
+    running_cmd_list = temp_list[:temp_list.index('net commit')+1]
+    global CANDIDATE
+    CANDIDATE = running_cmd_list
 
     logging.basicConfig(level=logging.DEBUG if args.debug else logging.INFO)
 
@@ -371,3 +429,4 @@ def main(*margs):
 
 if __name__ == "__main__":
     main()
+
