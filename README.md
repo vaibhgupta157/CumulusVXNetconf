@@ -26,8 +26,8 @@ By default, port is 8300, username is "admin" and password is "admin"
 # RPC Examples
 Once server is successfully started, then a netconf client can connect to the port specified. CumulusVXNetconf has candidate capability and can modify configuration in candidate datastore only.
 
-Some examples of get, get-config, edit-config:
-get:
+Some examples of get, get-config, edit-config:\
+get:\
 In get rpc can be sent with or without filter. Filter is simply a "net show" command.
 ```
 <get>
@@ -35,7 +35,7 @@ In get rpc can be sent with or without filter. Filter is simply a "net show" com
 </get>
 ```
 
-get-config:\
+get-config:
 ```
 <get-config>
 <source><running/></source>
