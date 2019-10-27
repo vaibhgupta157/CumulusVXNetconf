@@ -1,2 +1,0 @@
-net add ospf
-net add interface swp1 bridge access 103
