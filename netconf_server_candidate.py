@@ -12,9 +12,11 @@ from netconf import nsmap_add, NSMAP
 import json
 import subprocess
 from curses import ascii
-from lxml import etree
+from lxml import etree, objectify
 import dicttoxml
 import threading
+import cumulus_nclu
+from pyangbind.lib.serialise import pybindIETFXMLEncoder, pybindIETFXMLDecoder
 
 try:
     NETCONF_DIR=os.environ["NETCONF_DIR"]
@@ -33,7 +35,7 @@ def cand_run_diff():
         logging.error('Error while executing "net show configuration commands" during difference calculation : '+ proc_error)
         return {'Error' : 'Error while executing "net show configuration commands" during difference calculation : ' + proc_error}
     temp_list = proc_stdout.split('\n')
-    running_cmd_list = temp_list[:temp_list.index('net commit')+1]
+    running_cmd_list = temp_list[:temp_list.index('net commit')]
     global CANDIDATE
     candidate_set = set(CANDIDATE)
     running_set = set(running_cmd_list)
@@ -81,6 +83,8 @@ class SystemServer(object):
                     "capability").text = "urn:ietf:params:netconf:capability:candidate:1.0"
         util.subelm(capabilities,
                     "capability").text = "urn:ietf:params:netconf:capability:validate:1.0"
+        util.subelm(capabilities,
+                    "capability").text = "http://example.com/cumulus-nclu?module=cumulus-nclu&revision=2019-11-11"
 
     def rpc_get(self, session, rpc, filter_or_none): 
         """Passed the filter element or None if not present"""
@@ -110,7 +114,8 @@ class SystemServer(object):
     
     def rpc_get_config(self, session, rpc, source_elm, filter_or_none):  
         """Passed the source element"""
-        data = util.elm("config")
+        config = objectify.Element("data")
+        objectify.deannotate(config, cleanup_namespaces=True, xsi=True, pytype=True)
 
         source_accepted = ['{urn:ietf:params:xml:ns:netconf:base:1.0}running', '{urn:ietf:params:xml:ns:netconf:base:1.1}running', 'running', '{urn:ietf:params:xml:ns:netconf:base:1.0}candidate', '{urn:ietf:params:xml:ns:netconf:base:1.1}candidate', 'candidate']
 
@@ -118,18 +123,21 @@ class SystemServer(object):
             logging.error('Value of source element missing')
             raise error.InvalidValueProtoError(rpc, message='Missing value for source')
         elif source_elm[0].tag not in source_accepted:
-            logging.error('Only running datastore is accepted as source element in get-config operation. Source : ' + source_elm[0].tag)
+            logging.error('Only running and candidate datastore is accepted as source element in get-config operation. Source : ' + source_elm[0].tag)
             raise error.OperationNotSupportedAppError(rpc, message='Operation not permitted')
 
         if len(source_elm) > 1:
             logging.error('More than one source element for get-config operation')
             raise error.UnknownElementProtoError(rpc, source_elm[1])
         
+        output_object = cumulus_nclu.cumulus_nclu()
         if 'candidate' in source_elm[0].tag:
             global CANDIDATE
-            for cmd in CANDIDATE:
-                data.append(util.leaf_elm("cmd", cmd))
-            return util.filter_results(rpc, data, filter_or_none)
+            for command in CANDIDATE:
+                output_object.commands.cmd.append(command)
+            output_object_xml = pybindIETFXMLEncoder.encode(output_object.commands)
+            config.commands = output_object_xml
+            return util.filter_results(rpc, config, None)
 
         process = subprocess.Popen(['net', 'show', 'configuration', 'commands'], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         proc_stdout, proc_error = process.communicate()
@@ -138,17 +146,18 @@ class SystemServer(object):
             clean_proc_error = ''.join(c for c in proc_error if valid_xml_char_ordinal(c))
             raise error.InvalidValueAppError(rpc, message=clean_proc_error)
         temp_list = proc_stdout.split('\n')
-        cmd_list = temp_list[:temp_list.index('net commit')+1]
+        cmd_list = temp_list[:temp_list.index('net commit')]
 
-        for cmd in cmd_list:
-            data.append(util.leaf_elm("cmd", cmd))
+        for command in cmd_list:
+            output_object.commands.cmd.append(command)        
 
-        return util.filter_results(rpc, data, filter_or_none)
+        output_object_xml = pybindIETFXMLEncoder.encode(output_object.commands)
+        config.commands = output_object_xml
+        return util.filter_results(rpc, config, None)
     
-    def rpc_edit_config(self, session, rpc, target_elm, config):   
+    def rpc_edit_config(self, session, rpc, target_elm, *args):   
         """Passed the target element"""
         result = util.elm("ok")
-
         target_accepted = ['{urn:ietf:params:xml:ns:netconf:base:1.0}candidate', '{urn:ietf:params:xml:ns:netconf:base:1.1}candidate', 'candidate']
 
       
@@ -162,20 +171,29 @@ class SystemServer(object):
             logging.error('More than one target element for edit-config operation')
             raise error.UnknownElementProtoError(rpc, target_elm[1])
 
+        config = None
+        if (len(args))==3:
+            config = args[2]
+        elif (len(args))==2:
+            config = args[1]
+        elif (len(args))==1:
+            config = args[0]
+
         if config is None:
             logging.error('"config" element is missing in edit-config operation')
             raise error.MissingElementAppError(rpc, 'config')
 
         if len(config) == 0:
             logging.error('Commands missing under config')
-            raise error.MissingElementAppError(rpc, 'cmd')
+            raise error.MissingElementAppError(rpc, 'commands')
 
-        accepted_childs = ['{urn:ietf:params:xml:ns:netconf:base:1.0}cmd', '{urn:ietf:params:xml:ns:netconf:base:1.1}cmd', 'cmd']
 
-        for child in config.iterchildren():
-            if child.tag not in accepted_childs:
-                logging.error('Unknown element under config in edit-config operation : ' + child.tag)
-                raise error.UnknownElementProtoError(rpc, child)
+        try:
+            config_object = pybindIETFXMLDecoder.decode(etree.tostring(config), cumulus_nclu, "cumulus_nclu")
+        except Exception as e:
+            logging.error("Error while converting xml config into object : " + str(e))
+            raise error.MissingElementAppError(rpc, 'commands')
+
 
         process = subprocess.Popen(["net", "pending", "json"], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         proc_stdout, proc_error = process.communicate()
@@ -189,12 +207,12 @@ class SystemServer(object):
         cmdlist = []
         abort_process = subprocess.Popen(["net", "abort"], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         abort_proc_stdout, abort_proc_error = abort_process.communicate()
-        for cmd in config.iterchildren():
-            command = cmd.text.split()
+        for cmd in config_object.commands.cmd:
+            command = cmd.split()
             process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
             proc_stdout, proc_error = process.communicate()
             if proc_error:
-                logging.error('Error while executing command in edit-config operation : ' + cmd.text + '. Error : '+  proc_error + ' Rolling back.....')
+                logging.error('Error while executing command in edit-config operation : ' + cmd + '. Error : '+  proc_error + ' Rolling back.....')
                 abort_process = subprocess.Popen(["net", "abort"], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
                 abort_proc_stdout, abort_proc_error = abort_process.communicate()
                 existing_cmds_thread = []
@@ -204,11 +222,11 @@ class SystemServer(object):
                     existing_cmds_thread.append(eth)
                     eth.start()
                 #clean_proc_error = ''.join(c for c in proc_error if valid_xml_char_ordinal(c))
-                clean_proc_error = cmd.text + ': ' + proc_error.split("\n")[0]
+                clean_proc_error = cmd + ': ' + proc_error.split("\n")[0]
                 for eth in existing_cmds_thread:
                     eth.join()
                 raise error.InvalidValueAppError(rpc, message=clean_proc_error)
-            cmdlist.append(cmd.text)
+            cmdlist.append(cmd)
 
         abort_process = subprocess.Popen(["net", "abort"], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         abort_proc_stdout, abort_proc_error = abort_process.communicate()
@@ -313,8 +331,8 @@ class SystemServer(object):
         proc_stdout, proc_error = process.communicate()
         json_stdout = json.loads(proc_stdout)
 
+        existing_cmds = []
         if json_stdout:
-            existing_cmds = []
             for cmd in json_stdout['commands']:
                 existing_cmds.append(cmd['command'])
 
@@ -376,7 +394,7 @@ class SystemServer(object):
             logging.error('Error while executing "net show configuration commands" during difference calculation : '+ proc_error)
             raise error.OperationFailedProtoError(rpc)
         temp_list = proc_stdout.split('\n')
-        running_cmd_list = temp_list[:temp_list.index('net commit')+1]
+        running_cmd_list = temp_list[:temp_list.index('net commit')]
         global CANDIDATE
         CANDIDATE = running_cmd_list
         return util.elm("ok")
@@ -403,14 +421,14 @@ def main(*margs):
         logging.error('Error while executing "net show configuration commands" during difference calculation : '+ proc_error)
         raise error.OperationFailedProtoError(rpc)
     temp_list = proc_stdout.split('\n')
-    running_cmd_list = temp_list[:temp_list.index('net commit')+1]
+    running_cmd_list = temp_list[:temp_list.index('net commit')]
     global CANDIDATE
     CANDIDATE = running_cmd_list
 
     logging.basicConfig(level=logging.DEBUG if args.debug else logging.INFO)
 
     args.password = parse_password_arg(args.password)
-    host_key = os.path.dirname(__file__) + "/server-key"
+#    host_key = os.path.dirname(__file__) + "/server-key"
     host_key = NETCONF_DIR+'/netconf-key'
 
     auth = server.SSHUserPassController(username=args.username, password=args.password)
