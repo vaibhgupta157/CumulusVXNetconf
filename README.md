@@ -27,7 +27,7 @@ By default, port is 8300, username is "admin" and password is "admin"
 Once server is successfully started, then a netconf client can connect to the port specified. CumulusVXNetconf has candidate capability and can modify configuration in candidate datastore only.
 
 Some examples of get, get-config, edit-config:\
-get:\
+#### get:
 In get rpc can be sent with or without filter. Filter is simply a "net show" command.
 ```
 <get>
@@ -35,7 +35,7 @@ In get rpc can be sent with or without filter. Filter is simply a "net show" com
 </get>
 ```
 
-get-config:
+#### get-config:
 ```
 <get-config>
 <source><running/></source>
@@ -43,20 +43,22 @@ get-config:
 ```
 Source can be candidate as well
 
-edit-config:\
+#### edit-config:
 edit-config can only be performed on candidate datastore. Any configuration change pushed to candidate store has to be committed to running to make configuration active.
 ```
 <edit-config>
 <target><candidate/></target>
 <config>
-<cmd>net add ospf</cmd>
-<cmd>net add interface swp1 bridge access vlan 100</cmd>
+<commands xmlns="http://example.com/cumulus-nclu">
+ <cmd>net add ospf</cmd>
+ <cmd>net add interface swp1 bridge access vlan 100</cmd>
 ...
+</commands>
 </config>
 </edit-config>
 ```
 
-validate:\
+#### validate:
 Configuration pushed in candidate datastore can be validated before committing.
 ```
 <validate>
@@ -64,13 +66,13 @@ Configuration pushed in candidate datastore can be validated before committing.
 </validate>
 ```
 
-commit:\
+#### commit:
 Configuration pushed in candidate datastore can be committed to running:
 ```
 <commit/>
 ```
 
-copy-config:\
+#### copy-config:
 This RPC is used for copying running datastore configuration to candidate datastore.
 ```
 <copy-config>
