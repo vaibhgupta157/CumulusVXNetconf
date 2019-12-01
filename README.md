@@ -1,5 +1,5 @@
 # CumulusVXNetconf
-Cumulus Linux is an open network operating system. Network Command Line Utility(NCLU) is command interface for inspection and modification of configuration data in Cumulus Linux environment. CumulusVXNetconf is an attempt to build netconf capability in Cumulus Linux. It does not use any yang model and payload for netconf rpc messages are net commands. 
+Cumulus Linux is an open network operating system. Network Command Line Utility(NCLU) is command interface for inspection and modification of configuration data in Cumulus Linux environment. CumulusVXNetconf is an attempt to build netconf capability in Cumulus Linux. The configuration is not modelled using yang. It uses one yang model and payload for netconf rpc messages are nclu commands. 
 
 # Installation
 Run the script:
