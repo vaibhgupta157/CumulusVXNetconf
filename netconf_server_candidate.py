@@ -8,7 +8,7 @@ import socket
 import sys
 import time
 from netconf import error, server, util
-from netconf import nsmap_add, NSMAP
+#from netconf import nsmap_add, NSMAP
 import json
 import subprocess
 from curses import ascii
