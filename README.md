@@ -4,7 +4,7 @@ Cumulus Linux is an open network operating system. Network Command Line Utility(
 # Installation
 Run the script:
 ```
-../CumulusVXNetconf$./setup.sh
+../CumulusVXNetconf$./setup.sh SUDO-PASSWORD
 ```
 This script requires sudo password and will ask for restart :
 ```
