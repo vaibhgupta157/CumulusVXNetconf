@@ -19,7 +19,7 @@ Successful installation can be tested by checking value of env variable NETCONF_
 # Run Netconf Server 
 Run netconf_server_candidate.py using following:
 ```
-../CumulusVXNetconf$python netconf_server_candidate.py --port <port> --username <user> --password <pass>
+../CumulusVXNetconf$python netconf_server_candidate.py --port=<port> --username=<user> --password=<pass>
 ```
 By default, port is 8300, username is "admin" and password is "admin"
  
