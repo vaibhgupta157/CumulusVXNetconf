@@ -35,7 +35,7 @@ def cand_run_diff():
         logging.error('Error while executing "net show configuration commands" during difference calculation : '+ proc_error)
         return {'Error' : 'Error while executing "net show configuration commands" during difference calculation : ' + proc_error}
     temp_list = proc_stdout.split('\n')
-    running_cmd_list = temp_list[:temp_list.index('net commit')]
+    running_cmd_list = temp_list[1:temp_list.index('net commit')]
     global CANDIDATE
     candidate_set = set(CANDIDATE)
     running_set = set(running_cmd_list)
@@ -146,7 +146,7 @@ class SystemServer(object):
             clean_proc_error = ''.join(c for c in proc_error if valid_xml_char_ordinal(c))
             raise error.InvalidValueAppError(rpc, message=clean_proc_error)
         temp_list = proc_stdout.split('\n')
-        cmd_list = temp_list[:temp_list.index('net commit')]
+        cmd_list = temp_list[1:temp_list.index('net commit')]
 
         for command in cmd_list:
             output_object.commands.cmd.append(command)        
@@ -187,6 +187,13 @@ class SystemServer(object):
             logging.error('Commands missing under config')
             raise error.MissingElementAppError(rpc, 'commands')
 
+        try:
+            for command in config[0]:
+                if 'delete' in command.attrib.values():
+                    command.text = command.text.replace('add', 'del')
+        except Exception as e:
+            logging.error("Error while converting xml config into object : " + str(e))
+            raise error.MissingElementAppError(rpc, 'commands')
 
         try:
             config_object = pybindIETFXMLDecoder.decode(etree.tostring(config), cumulus_nclu, "cumulus_nclu")
@@ -237,9 +244,6 @@ class SystemServer(object):
             eth = threading.Thread(target=process.communicate)
             existing_cmds_thread.append(eth)
             eth.start()
-
-        #with open(NETCONF_DIR +'/candidate.txt', 'a+') as f:
-        #    f.write('\n'.join(cmdlist))
 
         global CANDIDATE
         edit_candidate = CANDIDATE[:]
@@ -336,14 +340,6 @@ class SystemServer(object):
             for cmd in json_stdout['commands']:
                 existing_cmds.append(cmd['command'])
 
-        '''
-        try:
-            with open(NETCONF_DIR+'/candidate.txt', 'r') as f:
-                cmdlist = f.readlines()
-        except IOError as e:
-            logging.error('Error while opening candidate.txt file. Make sure configuration is pushed to candidate datastore : ' + e)
-            raise error.MalformedMessageRPCError(rpc)
-        '''
         cmdlist = cand_run_diff()
 
         process = subprocess.Popen(["net", "abort"], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
@@ -364,12 +360,23 @@ class SystemServer(object):
             eth = threading.Thread(target=process.communicate)
             existing_cmds_threads.append(eth)
             eth.start()
+        
         if proc_error:
             logging.error('Error while committing candidate datastore configuration : '  + proc_error)
             for eth in existing_cmds_threads:
                 eth.join()
             clean_proc_error = ''.join(c for c in proc_error if valid_xml_char_ordinal(c))
             raise error.InvalidValueAppError(rpc, message=clean_proc_error)
+
+        process = subprocess.Popen(['net', 'show', 'configuration', 'commands'], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        proc_stdout, proc_error = process.communicate()
+        if proc_error:
+            logging.error('Error while executing "net show configuration commands" : '+ proc_error)
+            raise error.OperationFailedProtoError(rpc)
+        temp_list = proc_stdout.split('\n')
+        running_cmd_list = temp_list[1:temp_list.index('net commit')]
+        global CANDIDATE
+        CANDIDATE = running_cmd_list
 
         for eth in existing_cmds_threads:
             eth.join()
@@ -391,10 +398,10 @@ class SystemServer(object):
         process = subprocess.Popen(['net', 'show', 'configuration', 'commands'], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         proc_stdout, proc_error = process.communicate()
         if proc_error:
-            logging.error('Error while executing "net show configuration commands" during difference calculation : '+ proc_error)
+            logging.error('Error while executing "net show configuration commands" : '+ proc_error)
             raise error.OperationFailedProtoError(rpc)
         temp_list = proc_stdout.split('\n')
-        running_cmd_list = temp_list[:temp_list.index('net commit')]
+        running_cmd_list = temp_list[1:temp_list.index('net commit')]
         global CANDIDATE
         CANDIDATE = running_cmd_list
         return util.elm("ok")
@@ -418,10 +425,10 @@ def main(*margs):
     process = subprocess.Popen(['net', 'show', 'configuration', 'commands'], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     proc_stdout, proc_error = process.communicate()
     if proc_error:
-        logging.error('Error while executing "net show configuration commands" during difference calculation : '+ proc_error)
+        logging.error('Error while executing "net show configuration commands" : '+ proc_error)
         raise error.OperationFailedProtoError(rpc)
     temp_list = proc_stdout.split('\n')
-    running_cmd_list = temp_list[:temp_list.index('net commit')]
+    running_cmd_list = temp_list[1:temp_list.index('net commit')]
     global CANDIDATE
     CANDIDATE = running_cmd_list
 
