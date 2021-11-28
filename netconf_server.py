@@ -32,7 +32,7 @@ except Exception as e:
 
 logging.basicConfig(filename=NETCONF_DIR+'/logs/netconf_server.log', level=logging.DEBUG)
 
-CANDIDATE = []
+CANDIDATE = cumulus_nclu.cumulus_nclu()
 
 def cand_run_diff():
     process = subprocess.Popen(['net', 'show', 'configuration', 'commands'], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
@@ -53,11 +53,11 @@ def cand_run_diff():
     logging.debug("Running datastore commands:")
     logging.debug(str(running_cmd_list))
     logging.debug("Candidate datastore commands:")
-    logging.debug(str(CANDIDATE))
-    candidate_set = set(CANDIDATE)
-    running_set = set(running_cmd_list)
+    logging.debug(str(CANDIDATE.commands.cmd))
+    #candidate_set = set(CANDIDATE)
+    #running_set = set(running_cmd_list)
     #return list(candidate_set.difference(running_set))
-    return [cmd for cmd in CANDIDATE if cmd not in running_cmd_list]
+    return [cmnd for cmnd in CANDIDATE.commands.cmd if cmnd not in running_cmd_list]
 
 def valid_xml_char_ordinal(c):
     codepoint = ord(c)
@@ -154,9 +154,12 @@ class SystemServer(object):
         output_object = cumulus_nclu.cumulus_nclu()
         if 'candidate' in source_elm[0].tag:
             global CANDIDATE
+            '''
             for command in CANDIDATE:
                 output_object.commands.cmd.append(command)
-            output_object_xml = pybindIETFXMLEncoder.encode(output_object.commands)
+            '''
+            output_object_xml = pybindIETFXMLEncoder.encode(CANDIDATE.commands)
+            logging.debug(str(output_object_xml))
             config.commands = output_object_xml
             return util.filter_results(rpc, config, None)
 
@@ -180,6 +183,7 @@ class SystemServer(object):
                 output_object.commands.cmd.append(command)
 
         output_object_xml = pybindIETFXMLEncoder.encode(output_object.commands)
+        logging.debug(str(output_object_xml))
         config.commands = output_object_xml
         return util.filter_results(rpc, config, None)
 
@@ -243,12 +247,13 @@ class SystemServer(object):
         json_stdout = json.loads(proc_stdout)
 
         existing_cmds = []
+
         if json_stdout:
             for cmd in json_stdout['commands']:
                 existing_cmds.append(cmd['command'])
 
         global CANDIDATE
-        edit_candidate = CANDIDATE[:]
+        edit_candidate = CANDIDATE.commands.cmd[:]
         for cmd in edit_candidate:
             if ',' in cmd:
                 fixed_cmd = cmd[:cmd.rfind(" ")]
@@ -297,12 +302,14 @@ class SystemServer(object):
         #edit_candidate.extend(cmdlist)
         #CANDIDATE = list(SEt(edit_candidate))
         #CANDIDATE = list( dict.fromkeys(edit_candidate) )
+        
         global CANDIDATE
-        CANDIDATE = edit_candidate
+        CANDIDATE.commands.cmd = edit_candidate
+        
 
 
         logging.debug("Candidate Datastore Updated:")
-        logging.debug(str(CANDIDATE))
+        logging.debug(str(CANDIDATE.commands.cmd))
         for eth in existing_cmds_thread:
             eth.join()
 
@@ -435,7 +442,7 @@ class SystemServer(object):
         temp_list = proc_stdout.split('\n')
         running_cmd_list = temp_list[1:temp_list.index('net commit')]
         global CANDIDATE
-        CANDIDATE = running_cmd_list
+        CANDIDATE.commands.cmd = running_cmd_list
         for eth in existing_cmds_threads:
             eth.join()
         return util.elm("ok")
@@ -472,7 +479,7 @@ class SystemServer(object):
         temp_list = proc_stdout.split('\n')
         running_cmd_list = temp_list[1:temp_list.index('net commit')]
         global CANDIDATE
-        CANDIDATE = running_cmd_list
+        CANDIDATE.commands.cmd = running_cmd_list
         logging.info("Copy-config operation finished")
         return util.elm("ok")
 
@@ -498,7 +505,7 @@ class SystemServer(object):
                     running_cmd_list.append(fixed_cmd + " " + variable)
                 running_cmd_list.remove(cmd)
         global CANDIDATE
-        CANDIDATE = running_cmd_list
+        CANDIDATE.commands.cmd = running_cmd_list
 
         return util.elm("ok")
 
@@ -533,7 +540,7 @@ def main(*margs):
                 running_cmd_list.append(fixed_cmd + " " + variable)
             running_cmd_list.remove(cmd)
     global CANDIDATE
-    CANDIDATE = running_cmd_list
+    CANDIDATE.commands.cmd = running_cmd_list
 
     logging.basicConfig(level=logging.DEBUG if args.debug else logging.INFO)
 
